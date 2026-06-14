@@ -1,0 +1,51 @@
+{
+  "_comment": "Seiko 极致节能 — Qoder settings.json 合并补丁",
+  "_description": "将此文件内容合并到 Qoder 的 settings.json 中。不要直接替换。",
+  "_version": "1.0.0",
+
+  "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+
+  "rules": [
+    "seiko/rules/shared-prefix.md",
+    "seiko/rules/cache-optimization.md",
+    "seiko/rules/lean-ctx.md",
+    "seiko/rules/compression-default.md",
+    "seiko/rules/interceptor-aop.md"
+  ],
+
+  "skills": [
+    "seiko/skills/seiko-output",
+    "seiko/skills/seiko-cache",
+    "seiko/skills/seiko-router",
+    "seiko/skills/seiko-monitor"
+  ],
+
+  "mcpServers": {
+    "lean-ctx": {
+      "command": "lean-ctx",
+      "args": ["mcp"]
+    }
+  },
+
+  "hooks": {
+    "preToolUse": [
+      {
+        "matcher": "Bash",
+        "command": "node seiko/adapters/qoder/hook-adapter.cjs",
+        "timeout": 5000
+      }
+    ],
+    "postToolUse": [
+      {
+        "matcher": "",
+        "command": "node seiko/helpers/perf/perf-tracker.cjs --capture",
+        "timeout": 3000
+      }
+    ]
+  },
+
+  "environment": {
+    "SEIKO_PLATFORM": "qoder",
+    "SEIKO_LEVEL": "medium"
+  }
+}

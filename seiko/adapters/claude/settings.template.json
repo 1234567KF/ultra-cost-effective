@@ -1,0 +1,62 @@
+{
+  "_comment": "Seiko 极致节能 — Claude Code settings.json 模板",
+  "_description": "复制此文件内容到项目根目录的 settings.json（与 CLAUDE.md 同级）。seiko/ 目录需在项目根目录下。",
+  "_version": "1.0.0",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node seiko/helpers/tokenforge-hook.cjs",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node seiko/helpers/perf/perf-tracker.cjs --capture",
+            "timeout": 3000
+          }
+        ]
+      }
+    ]
+  },
+
+  "mcpServers": {
+    "lean-ctx": {
+      "command": "lean-ctx",
+      "args": ["mcp"]
+    }
+  },
+
+  "permissions": {
+    "allow": [
+      "Bash(npm install -g lean-ctx-bin:*)",
+      "Bash(lean-ctx:*)",
+      "Bash(node seiko/helpers/tokenforge.cjs:*)",
+      "Bash(node seiko/helpers/tokenforge-hook.cjs:*)",
+      "Bash(node seiko/helpers/skill-loader.cjs:*)",
+      "Bash(node seiko/helpers/prefix-validator.cjs:*)",
+      "Bash(node seiko/helpers/cache-monitor.cjs:*)",
+      "Bash(node seiko/helpers/perf/perf-tracker.cjs:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run build:*)",
+      "Bash(cargo:*)",
+      "Bash(pytest:*)",
+      "Bash(go test:*)"
+    ]
+  },
+
+  "environment": {
+    "SEIKO_PLATFORM": "claude",
+    "SEIKO_LEVEL": "medium"
+  }
+}
