@@ -10,7 +10,8 @@
     "ultra-cost-effective/rules/cache-optimization.md",
     "ultra-cost-effective/rules/lean-ctx.md",
     "ultra-cost-effective/rules/compression-default.md",
-    "ultra-cost-effective/rules/interceptor-aop.md"
+    "ultra-cost-effective/rules/interceptor-aop.md",
+    "ultra-cost-effective/rules/workflow-compress.md"
   ],
 
   "skills": [

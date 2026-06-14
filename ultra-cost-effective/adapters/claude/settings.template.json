@@ -47,6 +47,7 @@
       "Bash(node ultra-cost-effective/helpers/prefix-validator.cjs:*)",
       "Bash(node ultra-cost-effective/helpers/cache-monitor.cjs:*)",
       "Bash(node ultra-cost-effective/helpers/perf/perf-tracker.cjs:*)",
+      "Bash(node ultra-cost-effective/helpers/workflow-integrator.cjs:*)",
       "Bash(npm test:*)",
       "Bash(npm run build:*)",
       "Bash(cargo:*)",

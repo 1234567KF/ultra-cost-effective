@@ -23,11 +23,13 @@ ultra-cost-effective/
 │   ├── cache-optimization.md ← L2+L3: KV Cache策略
 │   ├── lean-ctx.md           ← L1: 上下文压缩规则
 │   ├── compression-default.md← L1: 压缩默认开启
-│   └── interceptor-aop.md    ← AOP: 上下文拦截规则（三色灯 + Agent Spawn Guard）
+│   ├── interceptor-aop.md    ← AOP: 上下文拦截规则（三色灯 + Agent Spawn Guard）
+│   └── workflow-compress.md ← WF: Dynamic Workflows 预压缩规则
 ├── helpers/                  ← 可执行脚本（纯Node.js，零外部依赖）
 │   ├── tokenforge.cjs        ← L1: Token压缩引擎核心
 │   ├── tokenforge-hook.cjs   ← L1: PreToolUse自动注入钩子
-│   ├── context-interceptor.cjs← AOP: 上下文拦截器（三色灯+Agent Spawn Guard）
+│   ├── context-interceptor.cjs← AOP: 上下文拦截器（三色灯+Agent Spawn Guard+Pre-Workflow）
+│   ├── workflow-integrator.cjs← WF: Dynamic Workflows 集成引擎（触发检测+ROI回测+专属预设）
 │   ├── skill-loader.cjs      ← L4: 技能按需加载
 │   ├── cache-monitor.cjs     ← L2: KV Cache命中率监控
 │   ├── prefix-validator.cjs  ← L2: 共享前缀一致性校验
@@ -90,7 +92,8 @@ node helpers/prefix-validator.cjs --check-all
 ### Claude Code
 - 使用 `adapters/claude/settings.template.json` 配置 Hook 和权限
 - PreToolUse Hook → `tokenforge-hook.cjs` 自动管道注入
-- Context Interceptor → `context-interceptor.cjs` 三色灯 + Agent Spawn Guard
+- Context Interceptor → `context-interceptor.cjs` 三色灯 + Agent Spawn Guard + Pre-Workflow
+- Workflow Integrator → `workflow-integrator.cjs` Dynamic Workflows 触发检测、预压缩、ROI 回测
 - PostToolUse Hook → `perf-tracker.cjs` 事件捕获
 - MCP Server → `lean-ctx` 上下文压缩
 
@@ -98,6 +101,7 @@ node helpers/prefix-validator.cjs --check-all
 - 使用 `adapters/qoder/settings.patch.json` 合并到 Qoder settings
 - Hook Adapter → `hook-adapter.cjs` 自动适配平台差异
 - AOP Rule → `interceptor-aop.md` 系统提示注入（三色灯拦截）
+- WF Rule → `workflow-compress.md` 工作流预压缩规则
 - 模型列表：仅暴露 deepseek-v4-pro / deepseek-v4-flash
 
 ### 即拷即用

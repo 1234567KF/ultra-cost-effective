@@ -236,6 +236,65 @@ function preAgentSpawnHint() {
   return hint;
 }
 
+// ─── Workflow 预压缩提示 ─────────────────────
+
+/**
+ * 在 Dynamic Workflow 触发前生成预压缩指导
+ * 与 preAgentSpawnHint 类似，但面向工作流编排（多 agent 场景）
+ * @param {number} [agentCount] - 预期 agent 数量
+ * @returns {string} 预压缩指导文本
+ */
+function preWorkflowHint(agentCount) {
+  const health = getContextHealth();
+  const memory = loadMemory();
+
+  // 估算工作流规模
+  const agents = agentCount || 15; // 默认 3 phases × 5 agents
+  const MAX_CONCURRENT = 16;
+  const concurrent = Math.min(agents, MAX_CONCURRENT);
+
+  let hint = '[UltraCostEffective Pre-Workflow Compression]';
+  hint += `\n上下文健康: ${health.status} (${health.estimatedTokens}/${health.windowSize} tokens, ${health.ratio}%)`;
+  hint += `\n工作流规模: ~${agents} agent (${concurrent} 并发)`;
+
+  // 乘法级节省估算
+  const avgAgentTokens = 15000;
+  const baselineTotal = agents * avgAgentTokens;
+  const compressionRatio = 0.65; // 默认 65% 压缩比
+  const savedTotal = Math.round(baselineTotal * compressionRatio);
+  hint += `\n乘法级节省: ${baselineTotal.toLocaleString()} → ${(baselineTotal - savedTotal).toLocaleString()} tokens`;
+  hint += `\n   (单体 ${(compressionRatio*100).toFixed(0)}% × ${agents} agent)`;
+
+  if (memory && memory.records && memory.records.length > 0) {
+    hint += `\n\n会话记忆: ${memory.records.length} 条已压缩记录`;
+    hint += `\n⚠ 子 agent 传递 session-memory 索引引用，非完整历史。`;
+    hint += `\n   如需原文: retrieve <id>`;
+  }
+
+  if (health.status === 'red') {
+    hint += `\n🚨 红色预警: 请先压缩主会话再触发工作流，否则 ${agents} 个子 agent 将消耗 ${(baselineTotal/1000).toFixed(0)}K tokens。`;
+  }
+
+  return hint;
+}
+
+/**
+ * 估算工作流运行的 token 消耗（含/不含压缩）
+ * @param {number} agentCount - 子 agent 数量
+ * @returns {{ baseline: number, compressed: number, saved: number, ratio: number }}
+ */
+function estimateWorkflowTokens(agentCount) {
+  const avgAgentTokens = 15000;
+  const baseline = agentCount * avgAgentTokens;
+  const compressed = Math.round(baseline * 0.35); // 65% 压缩
+  return {
+    baseline,
+    compressed,
+    saved: baseline - compressed,
+    ratio: (baseline - compressed) / baseline
+  };
+}
+
 // ─── 命令行接口 ────────────────────────────────
 
 function main() {
@@ -298,6 +357,21 @@ function main() {
     return;
   }
 
+  if (cmd === 'pre-workflow') {
+    const agentCount = parseInt(args[1]) || 15;
+    console.log(preWorkflowHint(agentCount));
+    return;
+  }
+
+  if (cmd === 'workflow-tokens') {
+    const agentCount = parseInt(args[1]) || 15;
+    const est = estimateWorkflowTokens(agentCount);
+    console.log(`基线(未压缩): ${est.baseline.toLocaleString()} tokens`);
+    console.log(`压缩后:       ${est.compressed.toLocaleString()} tokens`);
+    console.log(`节省:         ${est.saved.toLocaleString()} tokens (${(est.ratio*100).toFixed(0)}%)`);
+    return;
+  }
+
   // 默认: check
   const health = getContextHealth();
   const icon = health.status === 'green' ? '🟢' : health.status === 'yellow' ? '🟡' : '🔴';
@@ -312,6 +386,8 @@ module.exports = {
   getContextHealth,
   generateContextHint,
   preAgentSpawnHint,
+  preWorkflowHint,
+  estimateWorkflowTokens,
   estimateContextSize,
   getContextWindow
 };

@@ -28,6 +28,7 @@ dependencies:
     │  三色灯监控 + Agent Spawn Guard + 规则注入       │
     │  确保每次 LLM 调用前上下文已被压缩              │
     └──────────────────────┬──────────────────────────┘
+         │  Dynamic Workflows集成    │  ultracode 触发预压缩 + 乘法级节省 + ROI 回测
          │  L7  模型智能路由        │  DeepSeek Pro↔Flash 按需切换
          │  L6  A2A通信压缩         │  Agent间 ~3x 压缩消息
          │  L5  阶段智能跳过        │  变更小跳过不必要阶段
@@ -45,12 +46,14 @@ dependencies:
 ┌──────────────────────────────────────────────────────┐
 │              ultra-cost-effective 核心引擎（平台无关）                │
 │  tokenforge · skill-loader · cache-monitor · router  │
+│  workflow-integrator · context-interceptor             │
 │         纯 Node.js，__dirname 自定位，零平台依赖       │
 ├────────────────────┬─────────────────────────────────┤
 │   Claude Code      │        Qoder                    │
 │   settings.json    │   settings.patch.json           │
 │   PreToolUse Hook  │   hook-adapter.cjs              │
 │   MCP lean-ctx     │   模型列表锁 DeepSeek            │
+│   Dynamic Workflows│   AOP Rule (workflow-compress)  │
 │                    │                                 │
 │  ⇧ 配置模板在       │  ⇧ 适配器在                     │
 │  adapters/claude/  │  adapters/qoder/                │
@@ -94,7 +97,8 @@ dependencies:
 
 | 技能 | 文件 | 层级 | 职责 |
 |------|------|------|------|
-| ultra-cost-effective-interceptor | `helpers/context-interceptor.cjs` | AOP | 上下文拦截器，三色灯监控，Agent Spawn Guard |
+| ultra-cost-effective-interceptor | `helpers/context-interceptor.cjs` | AOP | 上下文拦截器，三色灯监控，Agent Spawn Guard，Pre-Workflow压缩 |
+| ultra-cost-effective-workflow | `helpers/workflow-integrator.cjs` | WF | Dynamic Workflows 集成引擎，触发检测，ROI回测，工作流专属预设 |
 | ultra-cost-effective-output | `skills/ultra-cost-effective-output/` | L1 | tokenforge输出压缩，4模压缩引擎 |
 | ultra-cost-effective-cache | `skills/ultra-cost-effective-cache/` | L2+L3 | KV Cache优化，共享前缀，缓存监控 |
 | ultra-cost-effective-router | `skills/ultra-cost-effective-router/` | L7 | DeepSeek Pro↔Flash智能路由 |

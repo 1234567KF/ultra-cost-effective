@@ -30,6 +30,7 @@ const os = require('os');
 const TRACKER_FILE = path.join(os.tmpdir(), 'ultra-cost-effective-perf-tracker.json');
 const MEMORY_FILE = path.join(os.tmpdir(), 'ultra-cost-effective-session-memory.json');
 const GUARD_LOG = path.join(os.tmpdir(), 'ultra-cost-effective-guard-log.json');
+const WORKFLOW_LOG = path.join(os.tmpdir(), 'ultra-cost-effective-workflow-log.json');
 
 // ─── Agent spawn 检测关键词 ───────────────────
 
@@ -40,6 +41,18 @@ const AGENT_SPAWN_PATTERNS = [
   /\bsub_agent\b/i,           // sub_agent keyword
   /\blaunch.*agent\b/i,       // launch agent
   /subagent_type/i,           // subagent_type parameter
+];
+
+// ─── Workflow 触发检测关键词 ─────────────────
+
+const WORKFLOW_TRIGGER_PATTERNS = [
+  /\bultracode\b/i,              // ultracode 关键词
+  /\/deep-research\b/,            // 内置工作流命令
+  /\/workflows?\b/,               // /workflows 管理命令
+  /\/effort\s+ultracode\b/i,      // /effort ultracode
+  /\bdynamic\s+workflow\b/i,      // 自然语言
+  /\brun\s+(a\s+)?workflow\b/i,   // "run a workflow"
+  /\buse\s+(a\s+)?workflow\b/i,   // "use a workflow"
 ];
 
 // ─── 已知的第三方压缩/节能工具 ──────────────────
@@ -103,6 +116,59 @@ function isAgentSpawn(command, toolName = '') {
 }
 
 /**
+ * 检测命令是否触发 Dynamic Workflow
+ * @param {string} command - 命令或提示
+ * @returns {{ isWorkflow: boolean, trigger: string|null }}
+ */
+function isWorkflowTrigger(command) {
+  if (!command) return { isWorkflow: false, trigger: null };
+
+  for (const pattern of WORKFLOW_TRIGGER_PATTERNS) {
+    if (pattern.test(command)) {
+      return { isWorkflow: true, trigger: command.match(pattern)?.[0] || 'workflow' };
+    }
+  }
+
+  return { isWorkflow: false, trigger: null };
+}
+
+/**
+ * Workflow 触发前置拦截：生成预工作流压缩策略
+ * @param {string} command - 触发命令
+ * @returns {{ isWorkflow: boolean, hint: string|null, contextHealth: object|null }}
+ */
+function preWorkflow(command) {
+  const detection = isWorkflowTrigger(command);
+  if (!detection.isWorkflow) {
+    return { isWorkflow: false, hint: null, contextHealth: null };
+  }
+
+  let contextHealth = null;
+  try {
+    const interceptor = require('./context-interceptor.cjs');
+    const hint = interceptor.preWorkflowHint();
+    contextHealth = interceptor.getContextHealth();
+
+    // 记录到 guard log
+    appendGuardEntry({
+      phase: 'workflow',
+      command: command.slice(0, 120),
+      trigger: detection.trigger,
+      ultraCostEffectiveApplied: true,
+      engine: 'workflow-integrator',
+      shouldApply: true,
+      warnings: contextHealth.status !== 'green' ? [`上下文${contextHealth.status}，已注入预工作流压缩提示`] : [],
+      conflicts: [],
+      reason: `Workflow 触发拦截: 上下文${contextHealth.status} (${contextHealth.ratio}%)`
+    });
+
+    return { isWorkflow: true, hint, contextHealth };
+  } catch {
+    return { isWorkflow: true, hint: '[UltraCostEffective] Workflow 触发检测到，建议预压缩上下文', contextHealth: null };
+  }
+}
+
+/**
  * Agent spawn 前置拦截：生成压缩上下文指导
  * 在 LLM 即将 spawn agent 时调用，确保子 agent 获得压缩上下文
  * @param {string} [command] - 触发命令
@@ -163,6 +229,9 @@ function preCheck(command) {
   // 检测是否为 Agent spawn 操作
   const spawnDetected = isAgentSpawn(command);
 
+  // 检测是否为 Workflow 触发
+  const workflowDetection = isWorkflowTrigger(command);
+
   // 检测其他压缩器
   for (const comp of KNOWN_COMPRESSORS) {
     if (comp.pattern.test(command)) {
@@ -178,8 +247,13 @@ function preCheck(command) {
   }
 
   // Agent spawn 警告：建议传递压缩上下文
-  if (spawnDetected) {
+  if (spawnDetected && !workflowDetection.isWorkflow) {
     warnings.push(`Agent spawn 检测到，建议传递压缩上下文摘要 + session-memory 索引`);
+  }
+
+  // Workflow 警告：触发预压缩
+  if (workflowDetection.isWorkflow) {
+    warnings.push(`Workflow 触发检测到 (${workflowDetection.trigger})，建议预压缩上下文 + 传递 session-memory 索引给所有子 agent`);
   }
 
   // 检查是否有重复管道
@@ -199,6 +273,8 @@ function preCheck(command) {
     engine: hasHeadroom ? 'headroom' : hasTokenforge ? 'tokenforge' : 'none',
     shouldApply: ultraCostEffectiveShouldApply,
     isAgentSpawn: spawnDetected,
+    isWorkflow: workflowDetection.isWorkflow,
+    workflowTrigger: workflowDetection.trigger,
     warnings,
     conflicts,
     reason: warnings.length > 0 ? warnings[0] : 'ok'
@@ -343,6 +419,38 @@ function auditEffectiveness() {
     const yellowSpawns = spawnCalls.filter(c => c.reason && c.reason.includes('yellow'));
     if (redSpawns.length > 0) lines.push(`  🔴 红色预警 spawn: ${redSpawns.length} 次`);
     if (yellowSpawns.length > 0) lines.push(`  🟡 黄色预警 spawn: ${yellowSpawns.length} 次`);
+    lines.push('');
+  }
+
+  // ── Workflow 拦截 ──
+  const workflowCalls = report.calls.filter(c => c.phase === 'workflow');
+  if (workflowCalls.length > 0) {
+    lines.push('─── Dynamic Workflow 拦截 ───');
+    lines.push(`拦截次数: ${workflowCalls.length}`);
+    const triggers = {};
+    for (const c of workflowCalls) {
+      const t = c.trigger || 'unknown';
+      triggers[t] = (triggers[t] || 0) + 1;
+    }
+    for (const [t, count] of Object.entries(triggers)) {
+      lines.push(`  ${t}: ${count} 次`);
+    }
+    lines.push('');
+  }
+
+  // ── Workflow ROI 摘要 ──
+  let workflowLog = null;
+  try {
+    if (fs.existsSync(WORKFLOW_LOG)) {
+      workflowLog = JSON.parse(fs.readFileSync(WORKFLOW_LOG, 'utf-8'));
+    }
+  } catch {}
+  if (workflowLog && workflowLog.runs && workflowLog.runs.length > 0) {
+    lines.push('─── Workflow ROI ───');
+    const runs = workflowLog.runs;
+    const totalTokens = runs.reduce((s, r) => s + (r.tokens || 0), 0);
+    lines.push(`工作流运行: ${runs.length} 次 | 总Token: ${(totalTokens/1000).toFixed(1)}K`);
+    lines.push(`详见: node workflow-integrator.cjs roi`);
     lines.push('');
   }
 
@@ -494,6 +602,20 @@ function main() {
     return;
   }
 
+  if (cmd === 'pre-workflow') {
+    const command = args.slice(1).join(' ');
+    const result = preWorkflow(command);
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (cmd === 'detect-workflow') {
+    const command = args.slice(1).join(' ');
+    const result = isWorkflowTrigger(command);
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
   // 默认: 状态概览
   const log = loadGuardLog();
   console.log('═══════════════════════════════════');
@@ -518,7 +640,9 @@ module.exports = {
   preCheck,
   postVerify,
   preAgentSpawn,
+  preWorkflow,
   isAgentSpawn,
+  isWorkflowTrigger,
   auditEffectiveness,
   generateGuardStatement,
   loadGuardLog,
