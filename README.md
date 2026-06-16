@@ -1,291 +1,269 @@
-# UltraCostEffective · 极致节能
+# UltraCostEffective · 操作说明书
 
-> **不降低 LLM 输出质量，综合节省 60-90% Token。**
-> Claude Code + Qoder 双平台通用，纯 Node.js 核心引擎，即拷即用。
-
-[![Tests](https://img.shields.io/badge/tests-187%20passed-brightgreen)](./ultra-cost-effective/bench/)
-[![Node](https://img.shields.io/badge/node-%3E%3D18-blue)]()
-[![License](https://img.shields.io/badge/license-MIT-blue)]()
+> 本文件是面向用户的详细操作指南。项目介绍请查看根目录 README.md。
 
 ---
 
-## 它解决什么问题？
+## 快速接入（两种方式任选）
 
-你每次让 AI 跑命令（`npm test`、`grep`、`cat` 等），原始输出可能几千行。这些内容**原封不动塞进上下文**，很快就把窗口塞满了：
-
-- AI 后续回答质量下降
-- Token 费用飙升
-- 长会话被迫中断
-
-**ultra-cost-effective 在工具输出进入 AI 大脑之前自动压缩它。**
-
-```
-工具输出 8000 tokens → [ultra-cost-effective] → 800 tokens → AI 大脑
-```
-
-## 30 秒上手
-
-**无需克隆仓库！** 在你的项目根目录直接运行：
-
-### macOS / Linux
+### 方式一：一键脚本（推荐）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/1234567KF/ultra-cost-effective/main/install.sh | bash
+# 在 ultra-cost-effective/ 目录下执行：
+
+# Windows PowerShell
+.\install.ps1 -Preset standard
+
+# macOS / Linux
+./install.sh --standard
 ```
 
-带参数：
+脚本自动完成全部 5 步，重启平台即可。
+
+**可选参数：**
+
+| 参数 | 说明 | 默认 |
+|------|------|------|
+| `-Preset quick/standard/extreme` | 节能预设 | standard |
+| `-SkipLeanCtx` | 跳过 lean-ctx 安装 | — |
+| `-SkipHeadroom` | 跳过 Headroom 安装 | — |
+
+### 方式二：手动 5 步
+
+#### 第 1 步：复制引擎
 
 ```bash
-# 指定平台
-curl -fsSL https://raw.githubusercontent.com/1234567KF/ultra-cost-effective/main/install.sh | bash -s -- --platform qoder
-
-# 极致模式
-curl -fsSL https://raw.githubusercontent.com/1234567KF/ultra-cost-effective/main/install.sh | bash -s -- --preset extreme
+cp -r ultra-cost-effective/ /path/to/your-project/
 ```
 
-### Windows PowerShell
+放到项目根目录，与 `package.json`、`src/` 同级。
 
-```powershell
-irm https://raw.githubusercontent.com/1234567KF/ultra-cost-effective/main/install.ps1 | iex
+#### 第 2 步：安装全局依赖（只需一次）
+
+以下两个依赖为**全局安装**，换项目时不需重复安装：
+
+**lean-ctx**（上下文压缩 — L1）：
+```bash
+npm install -g lean-ctx-bin
+lean-ctx init
 ```
 
-带参数：
-
-```powershell
-irm https://raw.githubusercontent.com/1234567KF/ultra-cost-effective/main/install.ps1 | iex -Platform qoder -Preset extreme
+**Headroom**（CCR 可逆压缩 — extreme 预设可选）：
+```bash
+pip install headroom-ai[all]
 ```
 
-脚本自动完成：下载引擎 → 解压到当前目录 → 安装依赖 → 智能合并 settings。
+> Headroom 为 extreme 预设的可选增强。不安装不影响 quick/standard 预设。
 
-**重启 Claude Code / Qoder 即可，全自动运行，无需任何操作。**
+#### 第 3 步：合并 settings
 
-> 如果你已克隆仓库，也可以用 `quick-setup.sh` / `quick-setup.ps1` 从本地安装。
+**Claude Code 用户：**
+
+```bash
+# 如果项目已有 .claude/settings.json，手动合并以下字段：
+# - env (添加 ULTRA_COST_EFFECTIVE_*)
+# - hooks (PreToolUse, PostToolUse)
+# - permissions.allow
+# - mcpServers
+
+# 如果没有，直接复制模板：
+cp ultra-cost-effective/adapters/claude/settings.template.json .claude/settings.json
+```
+
+**Qoder 用户：**
+
+将 `ultra-cost-effective/adapters/qoder/settings.patch.json` 的内容合并到 Qoder settings。
+
+#### 第 4 步：重启平台
+
+关掉 Claude Code / Qoder，重新打开。
+
+#### 第 5 步：正常使用
+
+框架全自动运行，无需任何操作。
 
 ---
 
-## 原理：四层拦截体系
+## 日常使用
 
-```
-工具输出 → [① 规则] → [② Hook] → [③ AOP 拦截器] → [④ Workflow 预压缩] → AI
-```
+### 全自动模式
 
-| 层 | 名称 | 做什么 | 触发时机 |
-|---|------|--------|---------|
-| ① | Always-on 规则 | 告诉 AI "输出要压缩" | 系统提示注入，始终生效 |
-| ② | PreToolUse Hook | 拦截 Shell 命令，自动套压缩管道 | 每次 Bash 命令前 |
-| ③ | AOP 上下文拦截器 | 监控上下文健康度（三色灯） | 每次 LLM 调用前 |
-| ④ | Workflow 预压缩 | 检测到 `ultracode` 触发时预压缩 | Dynamic Workflow 启动前 |
+安装后所有功能自动激活：
 
-**压缩只发生在"工具输出 → AI"这条路上，AI 的推理能力本身不受影响。**
+| 触发 | 自动行为 |
+|------|---------|
+| 任何 Shell 命令 | tokenforge 自动压缩输出 |
+| 文件读取 | lean-ctx MCP 自动缓存压缩 |
+| 模型调用 | DeepSeek Pro/Flash 自动路由 |
+| 上下文增长 | 三色灯实时监控，快满时提醒 |
+| `ultracode` 触发 | 工作流预压缩 + session-memory 传递 |
 
----
+### 手动命令
 
-## 怎么省钱？算笔账
-
-你让 AI 跑 `npm test`，输出 500 行测试日志（约 8000 tokens）：
-
-| 场景 | 不装 | 装了 ultra-cost-effective |
-|------|------|--------------------------|
-| 单次输出 | 8,000 tokens | 800 tokens（压缩 90%）|
-| 后续 20 轮对话 | 160,000 tokens | 16,000 tokens |
-| **节省** | — | **144,000 tokens（90%）** |
-
-**再乘以 Dynamic Workflows：**
-
-Claude Code 的 `ultracode` 工作流一次能 spawn 50-1000 个子 agent，每个都继承上下文。先压缩再启动工作流 → 节省是**乘法级**的：
-
-```
-单体压缩 65% × 50 个 agent = 等效节省 3,250%
-```
-
----
-
-## 三层预设
-
-| 预设 | 节省 | 适用场景 | 一句话 |
-|------|------|---------|--------|
-| `quick` | 50-70% | 日常编码 | 够快就行 |
-| `standard` ⭐ | 70-85% | 项目开发 | 推荐 |
-| `extreme` | 85-95% | 大型项目/长会话 | 极致省钱 |
-
-默认 `standard`，对话中说 `节能` 可切换。
-
----
-
-## 架构全景
-
-```
-    ┌── AOP Context Interceptor ──────────────────────┐
-    │  三色灯监控 + Agent Spawn Guard + 规则注入       │
-    │  确保每次 LLM 调用前上下文已被压缩              │
-    └──────────────────────┬──────────────────────────┘
-         │  Dynamic Workflows  │  ultracode 触发预压缩 + 乘法级节省
-         │  L7 模型智能路由    │  DeepSeek Pro↔Flash 按需切换
-         │  L6 A2A通信压缩     │  Agent间 ~3x 压缩消息
-         │  L5 阶段智能跳过    │  小变更跳过低价值阶段
-         │  L4 技能按需加载    │  非活跃技能 → ~25 token stub
-         │────────────────────┬───────────────────────
-         │  L3 长上下文预热    │  PRD/Spec 触发 KV Cache checkpoint
-         │  L2 共享前缀缓存    │  固定前缀，命中率 >90%
-         │  L1 输出+上下文压缩 │  tokenforge + lean-ctx，压缩比 80-99%
-         └────────────────────┴───────────────────────
-```
-
-```
-┌──────────────────────────────────────────────────────┐
-│        ultra-cost-effective 核心引擎（平台无关）        │
-│  tokenforge · context-interceptor · workflow-integrator│
-│  session-memory · guard · cache-monitor · router       │
-│         纯 Node.js，__dirname 自定位，零平台依赖        │
-├────────────────────┬─────────────────────────────────┤
-│   Claude Code      │        Qoder                    │
-│   settings.json    │   settings.patch.json           │
-│   PreToolUse Hook  │   hook-adapter.cjs              │
-│   Dynamic Workflows│   AOP + WF Rules                │
-│   MCP lean-ctx     │   模型列表锁 DeepSeek            │
-└────────────────────┴─────────────────────────────────┘
-```
-
----
-
-## 目录结构
-
-```
-ultra-cost-effective/
-├── helpers/                  ← 核心引擎（纯 Node.js，零外部依赖）
-│   ├── tokenforge.cjs              L1 输出压缩引擎（4模/3级）
-│   ├── tokenforge-hook.cjs         自动管道注入 Hook
-│   ├── context-interceptor.cjs     AOP 上下文拦截器（三色灯 + Agent Spawn + Pre-Workflow）
-│   ├── workflow-integrator.cjs     Dynamic Workflows 集成（触发检测 + ROI 回测 + 专属预设）
-│   ├── session-memory.cjs          压缩记录索引（原文可取回）
-│   ├── ultra-cost-effective-guard.cjs  跨技能生效守卫（防绕过 + Workflow 审计）
-│   ├── skill-loader.cjs            L4 技能按需加载
-│   ├── cache-monitor.cjs           L2 KV Cache 命中率监控
-│   ├── prefix-validator.cjs        L2 共享前缀一致性校验
-│   └── perf/
-│       ├── perf-tracker.cjs        全链路 Token 追踪
-│       ├── pricing.json            DeepSeek 双模型价格表
-│       └── optimization-registry.json
-├── rules/                    ← 规则层（always-on，自动注入）
-│   ├── interceptor-aop.md          三色灯 + Agent Spawn Guard
-│   ├── workflow-compress.md        Dynamic Workflows 预压缩
-│   ├── shared-prefix.md            L2 共享前缀
-│   ├── cache-optimization.md       KV Cache 策略
-│   ├── lean-ctx.md                 上下文压缩
-│   └── compression-default.md      默认压缩
-├── adapters/                 ← 平台适配层
-│   ├── claude/settings.template.json   Claude Code 配置模板
-│   └── qoder/
-│       ├── settings.patch.json         Qoder 配置补丁
-│       └── hook-adapter.cjs            Qoder Hook 适配器
-├── skills/                   ← 子技能定义
-│   ├── ultra-cost-effective-output/        L1 输出+上下文压缩
-│   ├── ultra-cost-effective-cache/         L2+L3 KV Cache 优化
-│   ├── ultra-cost-effective-router/        L7 DeepSeek 双模型路由
-│   └── ultra-cost-effective-monitor/       L0 全链路成本监控
-├── presets/                  ← 三层节能预设
-│   ├── quick.json                仅 L1（50-70%）
-│   ├── standard.json             L1+L2+L3（70-85%）⭐
-│   └── extreme.json              全七层（85-95%）
-├── bench/                    ← 基准测试（187 项全绿）
-│   ├── test-workflow.cjs             Workflow 集成测试（92 项）
-│   ├── test-interceptor.cjs          AOP 拦截器测试（37 项）
-│   ├── test-guard.cjs                生效守卫测试（26 项）
-│   ├── test-session-memory.cjs       会话记忆测试（32 项）
-│   └── test-hotswitch.cjs            热切换测试
-├── install.ps1               Windows 安装（目录已在项目中时）
-├── install.sh                macOS/Linux 安装
-├── SKILL.md                  Skill 入口声明
-├── CLAUDE.md                 Claude Code 项目引导
-└── README.md                 操作说明书
-```
-
----
-
-## 使用方法
-
-### 全自动模式（默认）
-
-安装后无需任何操作，框架全自动运行：
-
-- Shell 命令输出 → tokenforge 自动压缩
-- 文件读取 → lean-ctx MCP 自动缓存压缩
-- 模型选择 → 根据任务类型自动路由 DeepSeek Pro/Flash
-- 上下文监控 → 三色灯实时监控，快满时自动提醒
-- Workflow 触发 → `ultracode` 工作流前自动预压缩
-
-### 手动命令（可选）
-
-在对话中说：
+在对话中说以下关键词：
 
 | 关键词 | 效果 |
 |--------|------|
-| `token report` / `成本报告` | 查看当前会话 Token 消耗与节省 |
-| `节能` / `省token` | 切换预设：quick → standard → extreme |
-| `ultra-cost-effective status` | 各层运行状态 |
-| `ultra-cost-effective off` | 临时暂停 |
-| `ultra-cost-effective on` | 恢复 |
+| `token report` / `成本报告` | 查看 Token 消耗与节省明细 |
+| `节能` / `省token` | 切换预设（quick → standard → extreme 循环）|
+| `ultra-cost-effective status` | 查看各层运行状态、缓存命中率 |
+| `ultra-cost-effective off` | 临时关闭节能（调试用）|
+| `ultra-cost-effective on` | 恢复节能 |
+
+---
+
+## 三层预设详解
+
+| 预设 | 启用层 | 节省 | 说明 |
+|------|--------|------|------|
+| `quick` | L1 | 50-70% | 仅输出压缩，最轻量。适合日常快速编码 |
+| `standard` ⭐ | L1+L2+L3 | 70-85% | 输出压缩 + KV Cache + 上下文压缩。推荐 |
+| `extreme` | 全七层 | 85-95% | 全开。大型项目、长会话、极致省钱 |
+
+**切换方式：**
+- 对话中说 `节能`（循环切换）
+- 脚本直接调用：`node helpers/preset-switch.cjs standard`
+
+---
+
+## 压缩级别说明
+
+| 级别 | 效果 | 适用 |
+|------|------|------|
+| light | 轻量压缩，保持可读性 | 调试、探索 |
+| medium | 中度压缩，去除冗余 | 日常开发（默认）|
+| aggressive | 激进压缩，只保留关键 | CI/CD、大量输出 |
+
+**压缩仅发生在输出侧和上下文侧，不影响 LLM 推理质量。**
 
 ---
 
 ## Dynamic Workflows 集成
 
-当你在 Claude Code 中使用 `ultracode` 或 `/deep-research` 等工作流时：
+当你使用 Claude Code 的 `ultracode` 或 `/deep-research` 等工作流时：
 
-1. **自动检测触发** — 识别 `ultracode`、`/deep-research`、自然语言等所有触发方式
-2. **预压缩上下文** — 工作流脚本生成前压缩，所有子 agent 继承压缩上下文
-3. **专属预设** — 5 种工作流预设（moderate / aggressive / codeAudit / migration / refactor）
-4. **ROI 回测** — 利用工作流脚本的确定性（可重跑）精确测量节省效果
+### 自动行为
+
+1. 检测到 `ultracode` / `/deep-research` / 自然语言触发
+2. 在脚本生成前压缩上下文
+3. 所有子 agent 自动继承压缩上下文
+4. 乘法级节省：单体 65% × N 个 agent
+
+### 5 种工作流预设
+
+| 预设 | 适用 | 压缩比 | 特点 |
+|------|------|--------|------|
+| moderate | 研究分析 | 65% | 保留引用追溯 |
+| aggressive | 大量 agent | 80% | 代码精确，丢弃引用 |
+| codeAudit | 代码审计 | 75% | 代码精确，文档激进 |
+| migration | 迁移 | 70% | 代码精确，保留文档引用 |
+| refactor | 重构 | 60% | 高可靠性，保守压缩 |
+
+### ROI 追踪
 
 ```bash
-# 记录一次工作流运行
-node helpers/workflow-integrator.cjs track audit-api 320000
+# 记录运行
+node helpers/workflow-integrator.cjs track my-workflow 320000
 
-# 查看 ROI 报告
+# 查看报告
 node helpers/workflow-integrator.cjs roi
+
+# 按名称过滤
+node helpers/workflow-integrator.cjs roi my-workflow
 ```
 
 ---
 
-## 模型路由（DeepSeek）
+## 三色灯上下文监控
 
-| 任务类型 | 模型 | 输入价格 | KV Cache 命中 |
-|----------|------|---------|--------------|
-| 架构/设计/规划 | deepseek-v4-pro | ¥3.0/MTok | ¥0.025/MTok (120x) |
+| 状态 | 含义 | 行为 |
+|------|------|------|
+| 🟢 green | 上下文健康 (<60% 窗口) | 正常处理 |
+| 🟡 yellow | 中度占用 (60-80%) | 优先用索引引用 |
+| 🔴 red | 高危 (>80% 窗口) | 立即压缩，仅传摘要 |
+
+**检查命令：**
+```bash
+node helpers/context-interceptor.cjs check
+```
+
+---
+
+## 模型路由
+
+| 任务 | 模型 | 输入价 | KV Cache |
+|------|------|--------|---------|
+| 架构/设计/规划 | deepseek-v4-pro | ¥3.0/MTok | ¥0.025/MTok |
 | 编码/测试/修复 | deepseek-v4-flash | ¥1.0/MTok | ¥0.02/MTok |
 
-自动路由：含「架构/设计/规划」→ Pro；含「写代码/实现/修复」→ Flash。
+路由规则：
+- 含「架构/设计/规划/分析」→ Pro
+- 含「写代码/实现/修复/测试」→ Flash
+- 上下文过长 → 自动降级 Flash
+
+---
+
+## 验证与调试
+
+```bash
+# 验证核心引擎
+node helpers/prefix-validator.cjs --check-all
+
+# 运行全量测试 (187 项)
+node bench/test-workflow.cjs
+node bench/test-interceptor.cjs
+node bench/test-guard.cjs
+node bench/test-session-memory.cjs
+node bench/test-hotswitch.cjs
+
+# 测试 tokenforge 压缩
+node helpers/tokenforge.cjs --test
+
+# 查看上下文健康
+node helpers/context-interceptor.cjs health
+
+# 查看 guard 审计
+node helpers/ultra-cost-effective-guard.cjs audit
+```
+
+---
+
+## 卸载
+
+```bash
+# 1. 删除引擎目录
+rm -rf ultra-cost-effective/
+
+# 2. 移除 settings 中的 ultra-cost-effective 相关配置
+#    (hooks, permissions, mcpServers, environment)
+
+# 3. 重启平台
+```
+
+---
+
+## 常见问题
+
+**Q: 压缩后原文还能找回来吗？**
+能。session-memory 索引保留所有原文，通过 `retrieve <id>` 取回。
+
+**Q: 影响其他技能吗？**
+不影响。其他技能看到的工具输出已是压缩版本，如需原文同样通过索引取回。
+
+**Q: 两个项目能共用吗？**
+核心引擎通过 `__dirname` 自定位，每个项目独立安装，互不干扰。
+
+**Q: 支持其他模型吗？**
+当前路由仅 DeepSeek。扩展需修改 `adapters/` 中的路由规则。
+
+**Q: lean-ctx 装不上怎么办？**
+框架不强制依赖 lean-ctx。跳过安装后 L1 中的 MCP 压缩层不生效，其他层正常工作。
 
 ---
 
 ## 系统要求
 
 - Node.js ≥ 18
-- lean-ctx（`npm install -g lean-ctx-bin`，安装脚本自动处理）
+- lean-ctx（可选，`npm install -g lean-ctx-bin`）
 - DeepSeek API 访问
-- Claude Code v2.1.154+（Dynamic Workflows 支持）或 Qoder
-
----
-
-## FAQ
-
-**Q: 会影响代码质量吗？**
-不会。所有压缩在输出侧和上下文侧进行，AI 推理能力不受限。
-
-**Q: 两个平台怎么共用？**
-核心引擎通过 `__dirname` 自定位，同一份代码两边各合并对应的 settings 即可。
-
-**Q: 如何卸载？**
-删除 `ultra-cost-effective/` 目录，移除 settings 中相关配置，重启平台。
-
-**Q: 支持其他模型吗？**
-当前路由仅 DeepSeek（利用 120x KV Cache 差价杠杆）。扩展需修改 `adapters/` 路由规则。
-
-**Q: 原文被压缩了还能找回来吗？**
-能。session-memory 索引保留了所有原文，通过 `retrieve <id>` 可随时取回。
-
----
-
-## License
-
-MIT
+- Claude Code v2.1.154+（Dynamic Workflows）或 Qoder
