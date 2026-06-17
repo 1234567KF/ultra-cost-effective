@@ -103,7 +103,7 @@ function unifiedToClaude(result) {
       hookEventName: 'PreToolUse',
       permissionDecision: 'allow',
       permissionDecisionReason: result.reason || 'ultra-cost-effective: auto-compress',
-      modifiedInput: { command: result.modifiedCommand }
+      updatedInput: { command: result.modifiedCommand }
     };
   }
   return JSON.stringify(output);

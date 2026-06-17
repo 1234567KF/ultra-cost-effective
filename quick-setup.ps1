@@ -34,7 +34,7 @@ param(
 
 $ErrorActionPreference = "Continue"
 $SCRIPT_ROOT = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ENGINE_DIR = Join-Path $SCRIPT_ROOT "ultra-cost-effective"
+$ENGINE_DIR = $SCRIPT_ROOT  # 脚本本身就在 ultra-cost-effective/ 目录内
 
 # ─── 颜色工具 ──────────────────────────────────
 

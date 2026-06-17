@@ -261,7 +261,7 @@ function claudeHookFormat(input) {
         hookEventName: 'PreToolUse',
         permissionDecision: 'allow',
         permissionDecisionReason: `ultra-cost-effective: 自动注入 tokenforge ${config.type}/${config.level} 压缩`,
-        modifiedInput: {
+        updatedInput: {
           command: newCommand
         }
       }

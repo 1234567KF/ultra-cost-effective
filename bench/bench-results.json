@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-13T12:11:59.627Z",
+  "timestamp": "2026-06-17T03:54:48.017Z",
   "results": [
     {
       "name": "CLI输出",
@@ -65,10 +65,10 @@
       "name": "JSON-API",
       "type": "json",
       "level": "medium",
-      "inputSize": 25382,
-      "outputSize": 10204,
-      "origTokens": 6675,
-      "compTokens": 2718,
+      "inputSize": 25370,
+      "outputSize": 10193,
+      "origTokens": 6672,
+      "compTokens": 2715,
       "saved": 3957,
       "pct": 59.3,
       "compressed": "{\n \"code\": 0,\n \"message\": \"success\",\n \"data\": {\n  \"total\": 1287,\n  \"page\": 1,\n  \"pageSize\": 20,\n  \"items\": [\n   {\n    \"id\": \"prod_000001\",\n    \"name\": \"产品名称 1 - 这是一段比较长的描述文本用于测试JSON压缩效果\",\n    \"price\":..."
@@ -77,11 +77,11 @@
       "name": "JSON-API",
       "type": "json",
       "level": "aggressive",
-      "inputSize": 25382,
-      "outputSize": 2913,
-      "origTokens": 6675,
+      "inputSize": 25370,
+      "outputSize": 2914,
+      "origTokens": 6672,
       "compTokens": 790,
-      "saved": 5885,
+      "saved": 5882,
       "pct": 88.2,
       "compressed": "{\n \"code\": 0,\n \"message\": \"success\",\n \"data\": {\n  \"total\": 1287,\n  \"page\": 1,\n  \"pageSize\": 20,\n  \"items\": [\n   {\n    \"id\": \"prod_000001\",\n    \"name\": \"产品名称 1 - 这是一段比较长的描述文本用于测试JSON压缩效果\",\n    \"price\":..."
     },
@@ -113,18 +113,18 @@
       "name": "组合场景",
       "type": "auto",
       "level": "medium",
-      "inputSize": 40925,
-      "outputSize": 2939,
-      "origTokens": 10623,
+      "inputSize": 40913,
+      "outputSize": 2938,
+      "origTokens": 10620,
       "compTokens": 780,
-      "saved": 9843,
+      "saved": 9840,
       "pct": 92.7,
       "compressed": "\u001b[32mPASS\u001b[0m src/components/Button.test.tsx\n\u001b[32mPASS\u001b[0m src/components/Modal.test.tsx\n\u001b[32mPASS\u001b[0m src/utils/api.test.ts\n\u001b[31mFAIL\u001b[0m src/services/auth.test.ts\n  ● AuthService › login › should ha..."
     }
   ],
   "summary": {
     "avgPct": "39.6",
-    "totalSaved": 21494,
+    "totalSaved": 21488,
     "totalPct": "68.7",
     "scenarioCount": 10
   }

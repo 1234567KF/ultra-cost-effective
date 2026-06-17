@@ -372,6 +372,76 @@ function main() {
     return;
   }
 
+  // ─── PostToolUse Hook 模式 ─────────────────
+  // 从 stdin 读取 Hook 事件，输出 additionalContext 供 Claude Code 注入
+  // ★ 始终输出 session-memory 索引（即使是 green 状态），确保 LLM 始终感知压缩内容
+  if (cmd === 'post-tool-use') {
+    const chunks = [];
+    process.stdin.setEncoding('utf-8');
+    process.stdin.on('data', chunk => chunks.push(chunk));
+    process.stdin.on('end', () => {
+      const input = chunks.join('').trim();
+      const health = getContextHealth();
+      const memory = loadMemory();
+      const hasMemory = memory && memory.records && memory.records.length > 0;
+      let additionalContext = '';
+
+      // ── 始终附加 session-memory 索引（所有状态）──
+      if (hasMemory) {
+        const tfCount = memory.records.filter(r => r.compressor === 'tokenforge').length;
+        const hrCount = memory.records.filter(r => r.compressor === 'headroom').length;
+        const totalSaved = memory.records.reduce((s, r) => s + (r.origSize - r.compSize), 0);
+        const recentIds = memory.records.slice(-3).map(r => r.id.slice(0, 14)).join(', ');
+
+        additionalContext += `[UltraCostEffective Memory: ${memory.records.length}条压缩记录 `;
+        additionalContext += `(tokenforge:${tfCount}, headroom:${hrCount}) `;
+        additionalContext += `共省${(totalSaved/1024).toFixed(1)}KB上下文`;
+        if (health.status !== 'green') {
+          additionalContext += ` | 最近: ${recentIds}`;
+        }
+        additionalContext += ` | 取回原文: retrieve <id>]`;
+      }
+
+      // ── green: 仅注入 session-memory 索引（无健康告警）──
+      if (health.status === 'green') {
+        if (additionalContext) {
+          console.log(JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: 'PostToolUse',
+              additionalContext
+            }
+          }));
+        } else {
+          console.log(JSON.stringify({}));
+        }
+        return;
+      }
+
+      // ── yellow/red: 注入健康告警 + session-memory ──
+      const hint = generateContextHint();
+      if (hint) {
+        additionalContext = hint + '\n' + additionalContext;
+      }
+
+      // red 状态追加紧急指令
+      if (health.status === 'red') {
+        additionalContext += `\n🚨 上下文红色预警(${health.ratio}%): 请立即压缩历史。spawn Agent 时仅传 session-memory 索引，禁止复制完整工具输出。`;
+      }
+
+      if (additionalContext) {
+        console.log(JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: 'PostToolUse',
+            additionalContext: additionalContext.trim()
+          }
+        }));
+      } else {
+        console.log(JSON.stringify({}));
+      }
+    });
+    return;
+  }
+
   // 默认: check
   const health = getContextHealth();
   const icon = health.status === 'green' ? '🟢' : health.status === 'yellow' ? '🟡' : '🔴';
