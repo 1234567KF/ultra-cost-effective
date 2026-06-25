@@ -261,11 +261,91 @@ if ($Platform -eq "claude") {
     }
 
 } else {
-    # Qoder: 显示 patch 内容
+    # Qoder: 自动合并 settings.patch.json
+    $qoderSettingsPath = Join-Path $env:USERPROFILE ".qoder" "settings.json"
     $patchFile = Join-Path $targetEngine "adapters" "qoder" "settings.patch.json"
-    Write-Ok "Qoder 配置补丁文件位于:"
-    Write-Info $patchFile
-    Write-Info "请将此文件内容合并到 Qoder 的 settings.json 中"
+
+    if (-not (Test-Path $patchFile)) {
+        Write-Fail "补丁文件不存在: $patchFile"
+        exit 1
+    }
+
+    # 备份现有配置
+    if (Test-Path $qoderSettingsPath) {
+        Copy-Item $qoderSettingsPath "$qoderSettingsPath.backup" -Force
+        Write-Ok "已备份 settings.json → settings.json.backup"
+    }
+
+    # 读取现有配置（不存在则创建空对象）
+    $existing = @{}
+    if (Test-Path $qoderSettingsPath) {
+        try { $existing = Get-Content $qoderSettingsPath -Raw | ConvertFrom-Json } catch {
+            Write-Warn "现有 settings.json 解析失败，将创建新配置"
+        }
+    }
+
+    # 读取补丁
+    $patch = Get-Content $patchFile -Raw | ConvertFrom-Json
+
+    # ── 合并 models ──
+    if ($patch.models) {
+        if (-not (Get-Member -InputObject $existing -Name "models" -MemberType Properties)) {
+            $existing | Add-Member -NotePropertyName "models" -NotePropertyValue @() -Force
+        }
+        foreach ($m in $patch.models) {
+            if ($existing.models -notcontains $m) { $existing.models += $m }
+        }
+    }
+
+    # ── 合并 hooks（Qoder 扁平格式，节能体系独占 Hook 类型）──
+    if ($patch.hooks) {
+        if (-not (Get-Member -InputObject $existing -Name "hooks" -MemberType Properties)) {
+            $existing | Add-Member -NotePropertyName "hooks" -NotePropertyValue @{} -Force
+        }
+        foreach ($hookType in $patch.hooks.PSObject.Properties.Name) {
+            $existing.hooks | Add-Member -NotePropertyName $hookType -NotePropertyValue $patch.hooks.$hookType -Force
+        }
+    }
+
+    # ── 合并 env ──
+    if ($patch.environment) {
+        if (-not (Get-Member -InputObject $existing -Name "env" -MemberType Properties)) {
+            $existing | Add-Member -NotePropertyName "env" -NotePropertyValue @{} -Force
+        }
+        foreach ($envKey in $patch.environment.PSObject.Properties.Name) {
+            $existing.env | Add-Member -NotePropertyName $envKey -NotePropertyValue $patch.environment.$envKey -Force
+        }
+    }
+
+    # ── 合并 mcpServers ──
+    if ($patch.mcpServers) {
+        if (-not (Get-Member -InputObject $existing -Name "mcpServers" -MemberType Properties)) {
+            $existing | Add-Member -NotePropertyName "mcpServers" -NotePropertyValue @{} -Force
+        }
+        foreach ($serverName in $patch.mcpServers.PSObject.Properties.Name) {
+            if (-not (Get-Member -InputObject $existing.mcpServers -Name $serverName -MemberType Properties)) {
+                $existing.mcpServers | Add-Member -NotePropertyName $serverName -NotePropertyValue $patch.mcpServers.$serverName -Force
+            }
+        }
+    }
+
+    # ── 合并 rules ──
+    if ($patch.rules) {
+        if (-not (Get-Member -InputObject $existing -Name "rules" -MemberType Properties)) {
+            $existing | Add-Member -NotePropertyName "rules" -NotePropertyValue @() -Force
+        }
+        foreach ($r in $patch.rules) {
+            if ($existing.rules -notcontains $r) { $existing.rules += $r }
+        }
+    }
+
+    # 保存
+    $qoderSettingsDir = Split-Path $qoderSettingsPath -Parent
+    if (-not (Test-Path $qoderSettingsDir)) {
+        New-Item -ItemType Directory -Path $qoderSettingsDir -Force | Out-Null
+    }
+    $existing | ConvertTo-Json -Depth 10 | Set-Content $qoderSettingsPath -Encoding UTF8
+    Write-Ok "Qoder settings.json 已合并更新"
 }
 
 # 更新预设环境变量
@@ -280,6 +360,33 @@ if ($Platform -eq "claude") {
             $settings | ConvertTo-Json -Depth 10 | Set-Content $settingsFile -Encoding UTF8
             Write-Ok "预设已设置: $Preset"
         } catch {}
+    }
+} else {
+    # Qoder: 更新全局 settings.json 中的预设
+    $qoderSettingsPath = Join-Path $env:USERPROFILE ".qoder" "settings.json"
+    if (Test-Path $qoderSettingsPath) {
+        try {
+            $qoderSettings = Get-Content $qoderSettingsPath -Raw | ConvertFrom-Json
+            if (-not (Get-Member -InputObject $qoderSettings -Name "env" -MemberType Properties)) {
+                $qoderSettings | Add-Member -NotePropertyName "env" -NotePropertyValue @{} -Force
+            }
+            $qoderSettings.env | Add-Member -NotePropertyName "ULTRA_COST_EFFECTIVE_PRESET" -NotePropertyValue $Preset -Force
+            # 根据预设设置压缩级别
+            $presetFile = Join-Path $targetEngine "presets" "$Preset.json"
+            if (Test-Path $presetFile) {
+                $presetConfig = Get-Content $presetFile -Raw | ConvertFrom-Json
+                if ($presetConfig.layers.L1_tokenforge) {
+                    $level = $presetConfig.layers.L1_tokenforge.level
+                    $qoderSettings.env | Add-Member -NotePropertyName "ULTRA_COST_EFFECTIVE_LEVEL" -NotePropertyValue $level -Force
+                }
+            }
+            $qoderSettings | ConvertTo-Json -Depth 10 | Set-Content $qoderSettingsPath -Encoding UTF8
+            Write-Ok "Qoder 预设已设置: $Preset"
+        } catch {
+            Write-Warn "Qoder 预设设置失败: $_"
+        }
+    } else {
+        Write-Warn "Qoder settings.json 未找到，跳过预设设置"
     }
 }
 

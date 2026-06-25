@@ -21,13 +21,53 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const TRACKER_FILE = path.join(os.tmpdir(), 'ultra-cost-effective-perf-tracker.json');
+// ─── 项目根目录定位 ────────────────────────────
+
+function resolveProjectRoot() {
+  // 1. 环境变量优先
+  if (process.env.ULTRA_COST_EFFECTIVE_PROJECT_ROOT) {
+    return process.env.ULTRA_COST_EFFECTIVE_PROJECT_ROOT;
+  }
+  // 2. process.cwd()（Hook 执行时的工作目录即项目根）
+  const cwd = process.cwd();
+  if (fs.existsSync(path.join(cwd, 'ultra-cost-effective')) ||
+      fs.existsSync(path.join(cwd, 'package.json'))) {
+    return cwd;
+  }
+  // 3. 从 __dirname 向上查找（脚本在 helpers/perf/ 下）
+  let dir = __dirname;
+  for (let i = 0; i < 5; i++) {
+    dir = path.dirname(dir);
+    if (fs.existsSync(path.join(dir, 'ultra-cost-effective')) ||
+        fs.existsSync(path.join(dir, 'package.json'))) {
+      return dir;
+    }
+  }
+  // 4. 兜底：使用 os.tmpdir()
+  return os.tmpdir();
+}
+
+const PROJECT_ROOT = resolveProjectRoot();
+const TRACKER_FILE = path.join(PROJECT_ROOT, '.ultra-cost-effective-tracker.json');
+
+// ─── 定价数据 ──────────────────────────────────
+
+function loadPricing() {
+  try {
+    const pricingPath = path.join(__dirname, 'pricing.json');
+    if (fs.existsSync(pricingPath)) {
+      return JSON.parse(fs.readFileSync(pricingPath, 'utf-8'));
+    }
+  } catch {}
+  return null;
+}
 
 // ─── 数据结构 ──────────────────────────────────
 
 function createSession() {
   return {
     sessionId: `uce_${Date.now().toString(36)}`,
+    projectRoot: PROJECT_ROOT,
     startTime: Date.now(),
     totalCalls: 0,
     // Token 统计
@@ -100,13 +140,18 @@ function recordCall(session, callData) {
     session.layerSavings.L1_tokenforge.calls++;
   }
 
-  // 模型路由贡献
+  // 模型路由贡献（成本估算仅在 ULTRA_COST_EFFECTIVE_INCLUDE_ROUTER=1 时启用）
   if (callData.routedToFlash && callData.wouldUsePro) {
     session.layerSavings.L7_router.flashDowngrades++;
-    const proCost = (callData.inputTokens || 0) / 1_000_000 * 3.0;
-    const flashCost = (callData.inputTokens || 0) / 1_000_000 * 1.0;
-    session.layerSavings.L7_router.estimatedSaving += proCost - flashCost;
     session.layerSavings.L7_router.calls++;
+    if (process.env.ULTRA_COST_EFFECTIVE_INCLUDE_ROUTER === '1') {
+      const pricing = loadPricing();
+      const proPrice = pricing?.models?.['deepseek-v4-pro']?.inputPrice || 3.0;
+      const flashPrice = pricing?.models?.['deepseek-v4-flash']?.inputPrice || 1.0;
+      const proCost = (callData.inputTokens || 0) / 1_000_000 * proPrice;
+      const flashCost = (callData.inputTokens || 0) / 1_000_000 * flashPrice;
+      session.layerSavings.L7_router.estimatedSaving += proCost - flashCost;
+    }
   }
 
   // 记录调用明细（最多保留100条）
@@ -127,6 +172,9 @@ function recordCall(session, callData) {
 // ─── 报告生成 ──────────────────────────────────
 
 function generateReport(session) {
+  const includeRouter = process.env.ULTRA_COST_EFFECTIVE_INCLUDE_ROUTER === '1';
+  const pricing = loadPricing();
+
   const elapsed = Math.floor((Date.now() - session.startTime) / 1000);
   const h = Math.floor(elapsed / 3600);
   const m = Math.floor((elapsed % 3600) / 60);
@@ -136,23 +184,31 @@ function generateReport(session) {
     ? (session.totalCacheHitTokens / (session.totalCacheHitTokens + session.totalCacheMissTokens) * 100).toFixed(1)
     : '0.0';
 
-  // 成本计算 (DeepSeek 双模型)
-  // 根据实际使用的模型加权计算
+  // 成本计算 — 从 pricing.json 读取定价（避免硬编码）
+  const proInputPrice = pricing?.models?.['deepseek-v4-pro']?.inputPrice || 3.0;
+  const proOutputPrice = pricing?.models?.['deepseek-v4-pro']?.outputPrice || 9.0;
+  const flashInputPrice = pricing?.models?.['deepseek-v4-flash']?.inputPrice || 1.0;
+  const flashOutputPrice = pricing?.models?.['deepseek-v4-flash']?.outputPrice || 3.0;
+  const cacheHitPrice = pricing?.models?.['deepseek-v4-pro']?.cacheHitPrice || 0.025;
+  const cacheMissPrice = pricing?.models?.['deepseek-v4-pro']?.cacheMissPrice || 3.0;
+
   let inputCostFull = 0;
   let actualCost = 0;
   for (const [model, stats] of Object.entries(session.modelStats)) {
     const isPro = model.includes('pro');
-    const inputPrice = isPro ? 3.0 : 1.0;
-    const outputPrice = isPro ? 9.0 : 3.0;
+    const inputPrice = isPro ? proInputPrice : flashInputPrice;
+    const outputPrice = isPro ? proOutputPrice : flashOutputPrice;
     inputCostFull += (stats.inputTokens / 1_000_000) * inputPrice;
-    actualCost += (stats.inputTokens / 1_000_000) * inputPrice;  // 无优化时
+    actualCost += (stats.inputTokens / 1_000_000) * inputPrice;
     actualCost += (stats.outputTokens / 1_000_000) * outputPrice;
   }
   // 应用 KV Cache 折扣
-  const cacheHitCost = (session.totalCacheHitTokens / 1_000_000) * 0.025;
-  const cacheMissCost = (session.totalCacheMissTokens / 1_000_000) * 3.0;
-  actualCost = cacheHitCost + cacheMissCost + (session.totalOutputTokens / 1_000_000) * 3.0;
-  const routerSavings = session.layerSavings.L7_router.estimatedSaving;
+  const cacheHitCost = (session.totalCacheHitTokens / 1_000_000) * cacheHitPrice;
+  const cacheMissCost = (session.totalCacheMissTokens / 1_000_000) * cacheMissPrice;
+  actualCost = cacheHitCost + cacheMissCost + (session.totalOutputTokens / 1_000_000) * cacheMissPrice;
+
+  // L7 路由节省（仅在 ULTRA_COST_EFFECTIVE_INCLUDE_ROUTER=1 时计入）
+  const routerSavings = includeRouter ? session.layerSavings.L7_router.estimatedSaving : 0;
   const totalSavings = inputCostFull - actualCost + routerSavings;
 
   const lines = [];
@@ -160,6 +216,7 @@ function generateReport(session) {
   lines.push('       UltraCostEffective Token 报告');
   lines.push('═'.repeat(50));
   lines.push('');
+  lines.push(`项目:     ${session.projectRoot || PROJECT_ROOT}`);
   lines.push(`会话ID:   ${session.sessionId}`);
   lines.push(`运行时间: ${h}h ${m}m ${s}s  |  调用: ${session.totalCalls}`);
   lines.push('');
@@ -171,12 +228,22 @@ function generateReport(session) {
   lines.push(`L1 tokenforge:   -${(session.layerSavings.L1_tokenforge.savedTokens / 1000).toFixed(1)}K tokens (${session.layerSavings.L1_tokenforge.calls} 次)`);
   lines.push(`L2 KV Cache:     -${(session.layerSavings.L2_kvCache.savedTokens / 1000).toFixed(1)}K tokens, 命中率 ${hitRate}%`);
   lines.push(`L4 skill-loader: -${(session.layerSavings.L4_skillLoader.savedTokens / 1000).toFixed(1)}K tokens (${session.layerSavings.L4_skillLoader.calls} 次)`);
-  lines.push(`L7 router:       -¥${routerSavings.toFixed(2)} (Flash降级 ${session.layerSavings.L7_router.flashDowngrades} 次)`);
+  if (includeRouter) {
+    lines.push(`L7 router:       -¥${routerSavings.toFixed(2)} (Flash降级 ${session.layerSavings.L7_router.flashDowngrades} 次)`);
+  } else if (session.layerSavings.L7_router.flashDowngrades > 0) {
+    lines.push(`L7 router:       Flash降级 ${session.layerSavings.L7_router.flashDowngrades} 次 (成本节省已排除—动态定价)`);
+  }
   lines.push('');
   lines.push('─── 成本 ───');
+  if (pricing) {
+    lines.push(`定价基准: ${pricing.provider || 'DeepSeek'} (${pricing.updated || 'N/A'})`);
+  }
   lines.push(`无优化成本: ¥${inputCostFull.toFixed(3)}`);
   lines.push(`实际成本:   ¥${actualCost.toFixed(3)}`);
   lines.push(`预计节省:   ¥${totalSavings.toFixed(3)} (${inputCostFull > 0 ? (totalSavings / inputCostFull * 100).toFixed(1) : 0}%)`);
+  if (!includeRouter && session.layerSavings.L7_router.flashDowngrades > 0) {
+    lines.push(`注: L7模型路由节省未计入。设置 ULTRA_COST_EFFECTIVE_INCLUDE_ROUTER=1 以包含。`);
+  }
   lines.push('');
   if (Object.keys(session.modelStats).length > 0) {
     lines.push('─── 模型使用 ───');
