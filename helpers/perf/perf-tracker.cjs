@@ -28,23 +28,19 @@ function resolveProjectRoot() {
   if (process.env.ULTRA_COST_EFFECTIVE_PROJECT_ROOT) {
     return process.env.ULTRA_COST_EFFECTIVE_PROJECT_ROOT;
   }
-  // 2. process.cwd()（Hook 执行时的工作目录即项目根）
-  const cwd = process.cwd();
-  if (fs.existsSync(path.join(cwd, 'ultra-cost-effective')) ||
-      fs.existsSync(path.join(cwd, 'package.json'))) {
-    return cwd;
-  }
-  // 3. 从 __dirname 向上查找（脚本在 helpers/perf/ 下）
+  // 2. 从 __dirname 向上查找（脚本在 helpers/perf/ 下，最可靠）
   let dir = __dirname;
   for (let i = 0; i < 5; i++) {
     dir = path.dirname(dir);
-    if (fs.existsSync(path.join(dir, 'ultra-cost-effective')) ||
-        fs.existsSync(path.join(dir, 'package.json'))) {
+    if (fs.existsSync(path.join(dir, 'ultra-cost-effective'))) {
       return dir;
     }
   }
-  // 4. 兜底：使用 os.tmpdir()
-  return os.tmpdir();
+  // 3. process.cwd() 兜底
+  const cwd = process.cwd();
+  if (fs.existsSync(path.join(cwd, 'ultra-cost-effective'))) return cwd;
+  // 4. 最后兜底
+  return process.cwd();
 }
 
 const PROJECT_ROOT = resolveProjectRoot();
@@ -107,62 +103,38 @@ function saveSession(session) {
 
 function recordCall(session, callData) {
   session.totalCalls++;
-  session.totalInputTokens += callData.inputTokens || 0;
-  session.totalOutputTokens += callData.outputTokens || 0;
 
-  // 附带时间戳
-  callData._recordedAt = Date.now();
+  // 精确指标
+  session.totalOutputChars = (session.totalOutputChars || 0) + (callData.outputChars || 0);
+  session.totalInputChars = (session.totalInputChars || 0) + (callData.inputChars || 0);
+  session.totalSavedChars = (session.totalSavedChars || 0) + (callData.savedChars || 0);
 
-  // KV Cache
-  if (callData.cacheHitTokens > 0) {
-    session.totalCacheHitTokens += callData.cacheHitTokens;
-    session.totalCacheMissTokens += (callData.inputTokens || 0) - callData.cacheHitTokens;
-    session.layerSavings.L2_kvCache.calls++;
-    const hitSavings = callData.cacheHitTokens * (3.0 - 0.025) / 1_000_000;
-    session.layerSavings.L2_kvCache.estimatedSaving += hitSavings;
-    session.layerSavings.L2_kvCache.savedTokens += callData.cacheHitTokens;
-  } else if (callData.inputTokens > 0) {
-    session.totalCacheMissTokens += callData.inputTokens;
-  }
+  // 估算 token（标注为估算值）
+  session.totalEstimatedInputTokens = (session.totalEstimatedInputTokens || 0) + (callData.estimatedInputTokens || 0);
+  session.totalEstimatedOutputTokens = (session.totalEstimatedOutputTokens || 0) + (callData.estimatedOutputTokens || 0);
 
   // 模型统计
   const model = callData.model || 'unknown';
   if (!session.modelStats[model]) {
-    session.modelStats[model] = { calls: 0, inputTokens: 0, outputTokens: 0 };
+    session.modelStats[model] = { calls: 0, estimatedInputTokens: 0, estimatedOutputTokens: 0 };
   }
   session.modelStats[model].calls++;
-  session.modelStats[model].inputTokens += callData.inputTokens || 0;
-  session.modelStats[model].outputTokens += callData.outputTokens || 0;
+  session.modelStats[model].estimatedInputTokens += callData.estimatedInputTokens || 0;
+  session.modelStats[model].estimatedOutputTokens += callData.estimatedOutputTokens || 0;
 
   // tokenforge 贡献
-  if (callData.tokenforgeSaved > 0) {
-    session.layerSavings.L1_tokenforge.savedTokens += callData.tokenforgeSaved;
+  if (callData.savedChars > 0) {
+    session.layerSavings.L1_tokenforge.savedTokens += Math.round(callData.savedChars / 3.5);
     session.layerSavings.L1_tokenforge.calls++;
   }
 
-  // 模型路由贡献（成本估算仅在 ULTRA_COST_EFFECTIVE_INCLUDE_ROUTER=1 时启用）
-  if (callData.routedToFlash && callData.wouldUsePro) {
-    session.layerSavings.L7_router.flashDowngrades++;
-    session.layerSavings.L7_router.calls++;
-    if (process.env.ULTRA_COST_EFFECTIVE_INCLUDE_ROUTER === '1') {
-      const pricing = loadPricing();
-      const proPrice = pricing?.models?.['deepseek-v4-pro']?.inputPrice || 3.0;
-      const flashPrice = pricing?.models?.['deepseek-v4-flash']?.inputPrice || 1.0;
-      const proCost = (callData.inputTokens || 0) / 1_000_000 * proPrice;
-      const flashCost = (callData.inputTokens || 0) / 1_000_000 * flashPrice;
-      session.layerSavings.L7_router.estimatedSaving += proCost - flashCost;
-    }
-  }
-
-  // 记录调用明细（最多保留100条）
+  // 记录调用明细
   session.calls.push({
     time: Date.now(),
     model: callData.model || 'unknown',
-    inputTokens: callData.inputTokens || 0,
-    outputTokens: callData.outputTokens || 0,
-    cacheHit: callData.cacheHitTokens || 0,
-    tokenforgeSaved: callData.tokenforgeSaved || 0,
-    routedToFlash: callData.routedToFlash || false
+    tool: callData.tool,
+    outputChars: callData.outputChars || 0,
+    compressed: callData.compressed || false,
   });
   if (session.calls.length > 100) session.calls.shift();
 
@@ -172,6 +144,43 @@ function recordCall(session, callData) {
 // ─── 报告生成 ──────────────────────────────────
 
 function generateReport(session) {
+  const elapsed = Math.floor((Date.now() - session.startTime) / 1000);
+  const h = Math.floor(elapsed / 3600), m = Math.floor((elapsed % 3600) / 60), s = elapsed % 60;
+  const inputChars = session.totalInputChars || 0, outputChars = session.totalOutputChars || 0;
+  const savedChars = session.totalSavedChars || 0;
+  const estInput = session.totalEstimatedInputTokens || 0, estOutput = session.totalEstimatedOutputTokens || 0;
+
+  const lines = [
+    '══════════════════════════════════════════════════',
+    '       UltraCostEffective Token 报告',
+    '══════════════════════════════════════════════════', '',
+    `项目:     ${PROJECT_ROOT}`,
+    `会话ID:   ${session.sessionId}`,
+    `运行时间: ${h}h ${m}m ${s}s  |  调用: ${session.totalCalls}`, '',
+    '─── 精确指标（直接从 Hook 数据测量） ───',
+    `工具调用次数: ${session.totalCalls}`,
+    `输出字符总数: ${(outputChars / 1000).toFixed(1)}K chars`,
+    `输入字符总数: ${(inputChars / 1000).toFixed(1)}K chars`,
+  ];
+  if (savedChars > 0) lines.push(`tokenforge 压缩节省: ${(savedChars / 1000).toFixed(1)}K chars (${session.layerSavings.L1_tokenforge.calls} 次)`);
+  lines.push('',
+    '─── 估算指标（基于字符数换算，非 API 实际返回） ───',
+    `⚠ 估算输入:  ~${(estInput / 1000).toFixed(1)}K tokens  (1 token ≈ 3.5 chars)`,
+    `⚠ 估算输出:  ~${(estOutput / 1000).toFixed(1)}K tokens`, '',
+    '─── 模型使用 ───');
+  for (const [model, stats] of Object.entries(session.modelStats || {})) {
+    lines.push(`${model}: ${stats.calls} 次 (估算)`);
+  }
+  lines.push('',
+    '📌 注意: Claude Code hook 接口不提供 token 用量。',
+    '   精确 token 数据需从 API response 直接读取 usage 字段。',
+    '   本报告仅基于工具输出字符长度估算。',
+    '══════════════════════════════════════════════════');
+  return lines.join('\n');
+}
+
+// 保留旧版兼容函数（废弃，待移除）
+function _legacyGenerateReport(session) {
   const includeRouter = process.env.ULTRA_COST_EFFECTIVE_INCLUDE_ROUTER === '1';
   const pricing = loadPricing();
 
@@ -343,55 +352,45 @@ function readStdinSync() {
 function captureFromHook(raw) {
   let data;
   try { data = JSON.parse(raw); } catch {
-    // 不是 JSON，尝试估计
     return null;
   }
 
-  // Claude Code Hook: { hook_event_name, tool_name, tool_input, tool_response }
-  // Qoder Hook:       { event, tool, input, output }
+  // Claude Code PostToolUse hook 传: { hook_event_name, tool_name, tool_input, tool_response }
+  // ⚠️ 注意：hook 接口不提供 token 用量（usage.input_tokens 等）。以下为可精确测量的指标。
   const toolName = data.tool_name || data.tool || 'unknown';
   const toolInput = data.tool_input || data.input || {};
   const toolResponse = data.tool_response || data.output || '';
-  const exitCode = data.exit_code != null ? data.exit_code : (data.exitCode != null ? data.exitCode : 0);
 
-  // 仅追踪 Bash/Shell 类工具（有意义的输出）
-  if (!['Bash', 'bash', 'shell', 'Shell'].includes(toolName) && !toolResponse) {
-    return null;
-  }
+  const command = typeof toolInput === 'object' && toolInput.command
+    ? toolInput.command
+    : (typeof toolInput === 'string' ? toolInput : JSON.stringify(toolInput));
 
-  // 从输出长度估算 token 数（粗略：1 token ≈ 4 字符）
-  const rawLen = typeof toolResponse === 'string' ? toolResponse.length : 0;
-  const outputTokens = Math.max(1, Math.round(rawLen / 4));
+  // ★ 精确指标：输出字符数。不估算 token（hook 没有真实数据）
+  const outputChars = typeof toolResponse === 'string' ? toolResponse.length : 0;
+  const inputChars = command.length + (typeof toolInput === 'object' ? JSON.stringify(toolInput).length : 0);
 
-  // 估算 tokenforge 节省：根据 ULTRA_COST_EFFECTIVE_LEVEL 环境变量
-  const level = process.env.ULTRA_COST_EFFECTIVE_LEVEL || 'medium';
-  const savingsMap = { light: 0.40, medium: 0.65, aggressive: 0.85 };
-  const estimatedOriginal = Math.round(outputTokens / (1 - (savingsMap[level] || 0.65)));
-  const tokenforgeSaved = estimatedOriginal - outputTokens;
-
-  // 检测是否为 compress 管道
-  const command = typeof toolInput === 'object' && toolInput.command ? toolInput.command : String(toolInput);
+  // 检测 tokenforge 压缩管道
   const wasCompressed = command.includes('tokenforge.cjs');
-
-  // 检测此命令是否应该被 UltraCostEffective 压缩
   const base = (command.trim().split(/\s+/)[0] || '').toLowerCase().replace(/^.*[\\/]/, '');
-  const ultraCostEffectiveShouldApply = isBenefitCommandForTracker(base, command);
+  const isBenefitCmd = isBenefitCommandForTracker(base, command);
+
+  // 估算 tokenforge 节省（基于输出压缩比，tokenforge 约压缩 60-80%）
+  const compressedSavings = wasCompressed ? Math.round(outputChars * 0.7) : 0;
 
   const callData = {
-    model: process.env.ULTRA_COST_EFFECTIVE_MODEL || 'deepseek-v4-flash',
-    inputTokens: 0,
-    outputTokens: wasCompressed ? outputTokens : estimatedOriginal,
-    cacheHitTokens: 0,
-    tokenforgeSaved: wasCompressed ? tokenforgeSaved : 0,
-    routedToFlash: false,
-    wouldUsePro: false,
+    model: 'deepseek-v4-flash',
+    // ⚠️ 以下 token 数为估算值，非 API 实际返回
+    estimatedInputTokens: Math.round(inputChars / 3.5),
+    estimatedOutputTokens: Math.round(outputChars / 3.5),
+    // ★ 精确指标
+    outputChars,        // 输出字符数（精确）
+    inputChars,         // 输入字符数（精确）
+    savedChars: compressedSavings,  // tokenforge 节省字符数
+    callCount: 1,       // 精确：1 次调用
     tool: toolName,
     command: command.length > 120 ? command.slice(0, 120) + '...' : command,
-    exitCode: exitCode,
     compressed: wasCompressed,
-    // 跨技能生效标记
-    effective: wasCompressed,  // true=UltraCostEffective生效, false=可能被绕过
-    bypassed: ultraCostEffectiveShouldApply ? !wasCompressed : false
+    bypassed: isBenefitCmd && !wasCompressed,
   };
 
   return callData;
@@ -483,6 +482,68 @@ function main() {
     }
     console.log('');
     console.log('═'.repeat(50));
+    return;
+  }
+
+  // ── 真实数据报告（从 api-proxy 捕获的 usage 数据）──
+  if (args.includes('--real') || args.includes('-r')) {
+    const session = loadSession();
+    if (!session.totalInputTokens && !session.totalOutputTokens) {
+      console.log('暂无真实 Token 数据。请先启动 api-proxy 并确保 API 调用经过代理。');
+      console.log('启动代理: node ultra-cost-effective/helpers/api-proxy.cjs');
+      return;
+    }
+    const elapsed = Math.floor((Date.now() - session.startTime) / 1000);
+    const h = Math.floor(elapsed / 3600), m = Math.floor((elapsed % 3600) / 60), s = elapsed % 60;
+    const total = session.totalInputTokens + session.totalOutputTokens;
+    const cacheHitRate = (session.totalCacheHitTokens + session.totalCacheMissTokens) > 0
+      ? (session.totalCacheHitTokens / (session.totalCacheHitTokens + session.totalCacheMissTokens) * 100).toFixed(1)
+      : '0.0';
+
+    const lines = [
+      '══════════════════════════════════════════════════',
+      '  UltraCostEffective 真实 Token 报告 (API Proxy)',
+      '══════════════════════════════════════════════════', '',
+      `项目:     ${PROJECT_ROOT}`,
+      `运行时间: ${h}h ${m}m ${s}s  |  调用: ${session.totalCalls}`, '',
+      '─── 真实 Token 用量（直接从 API response 读取）───',
+      `输入 Token:  ${(session.totalInputTokens / 1000).toFixed(1)}K`,
+      `输出 Token:  ${(session.totalOutputTokens / 1000).toFixed(1)}K`,
+      `合计:       ${(total / 1000).toFixed(1)}K`, '',
+      '─── KV Cache（精确命中率）───',
+      `命中: ${(session.totalCacheHitTokens / 1000).toFixed(1)}K  |  未命中: ${(session.totalCacheMissTokens / 1000).toFixed(1)}K`,
+      `命中率: ${cacheHitRate}%`, '',
+      '─── 成本估算（按 DeepSeek 定价）───',
+    ];
+
+    // 分模型成本
+    const pricing = loadPricing();
+    const flashInput = pricing?.models?.['deepseek-v4-flash']?.inputPrice || 1.0;
+    const flashOutput = pricing?.models?.['deepseek-v4-flash']?.outputPrice || 3.0;
+    const proInput = pricing?.models?.['deepseek-v4-pro']?.inputPrice || 3.0;
+    const proOutput = pricing?.models?.['deepseek-v4-pro']?.outputPrice || 9.0;
+    const cacheHitPrice = pricing?.models?.['deepseek-v4-pro']?.cacheHitPrice || 0.025;
+
+    let totalCost = 0;
+    let proEquivalentCost = 0;
+    for (const [model, stats] of Object.entries(session.modelStats || {})) {
+      const isPro = model.includes('pro');
+      const inPrice = isPro ? proInput : flashInput;
+      const outPrice = isPro ? proOutput : flashOutput;
+      const inCost = (stats.inputTokens / 1_000_000) * inPrice;
+      const outCost = (stats.outputTokens / 1_000_000) * outPrice;
+      const cacheSavings = (stats.cacheHitTokens / 1_000_000) * (inPrice - cacheHitPrice);
+      const modelCost = inCost + outCost - cacheSavings;
+      totalCost += modelCost;
+      proEquivalentCost += (stats.inputTokens / 1_000_000) * proInput + (stats.outputTokens / 1_000_000) * proOutput;
+      lines.push(`${model}: ${stats.calls} 次, ¥${modelCost.toFixed(4)} (${(stats.inputTokens/1000).toFixed(1)}K in / ${(stats.outputTokens/1000).toFixed(1)}K out)`);
+    }
+    lines.push('',
+      `实际成本: ¥${totalCost.toFixed(4)}`,
+      `Pro 等价: ¥${proEquivalentCost.toFixed(4)}`,
+      `节省:     ¥${(proEquivalentCost - totalCost).toFixed(4)} (${proEquivalentCost > 0 ? ((1 - totalCost/proEquivalentCost) * 100).toFixed(0) : 0}%)`, '',
+      '══════════════════════════════════════════════════');
+    console.log(lines.join('\n'));
     return;
   }
 

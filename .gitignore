@@ -27,3 +27,6 @@ _rename.*
 # 环境文件（如有自定义）
 .env
 .env.local
+
+# Token追踪数据（运行时生成，不应提交）
+.ultra-cost-effective-tracker.json
