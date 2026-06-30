@@ -1,6 +1,7 @@
 {
   "_comment": "UltraCostEffective 极致节能 — Qoder settings.json 合并补丁",
   "_description": "将此文件内容合并到 Qoder 的 settings.json 中。不要直接替换。",
+  "_important": "⚠️ 路径转换必需：本补丁中的 rules/skills/hooks.command 使用相对路径作为模板。合并到 ~/.qoder/settings.json 前，必须将 'ultra-cost-effective/...' 转为 '<项目绝对路径>/ultra-cost-effective/...'，否则 Qoder 从 ~/.qoder/ 基路径解析会导致全部失效。推荐使用 quick-setup.ps1 自动完成转换。",
   "_version": "1.2.0",
 
   "models": ["deepseek-v4-pro", "deepseek-v4-flash"],

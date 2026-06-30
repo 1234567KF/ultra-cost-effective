@@ -287,6 +287,61 @@ if ($Platform -eq "claude") {
     # 读取补丁
     $patch = Get-Content $patchFile -Raw | ConvertFrom-Json
 
+    # ── 路径转换：将相对路径转为绝对路径 ──
+    # Qoder 的全局 settings.json (~/.qoder/settings.json) 需要绝对路径
+    # 才能正确解析 rules/skills/hooks，否则会从 ~/.qoder/ 基路径解析导致失效
+    Write-Info "转换相对路径为绝对路径 (基准: $targetAbs)..."
+
+    # 辅助函数：转换 node 命令中的相对路径为绝对路径（保留参数）
+    function Convert-NodeCommandPath($cmd, $baseDir) {
+        if ($cmd -match '^node\s+(ultra-cost-effective/\S+)(\s+.*)?$') {
+            $relPath = $Matches[1]
+            $restArgs = if ($Matches[2]) { $Matches[2] } else { '' }
+            $absPath = Join-Path $baseDir $relPath
+            return "node $absPath$restArgs"
+        }
+        return $cmd
+    }
+
+    # 转换 rules 路径
+    if ($patch.rules) {
+        $convertedRules = @()
+        foreach ($r in $patch.rules) {
+            if (-not [System.IO.Path]::IsPathRooted($r)) {
+                $convertedRules += (Join-Path $targetAbs $r)
+            } else {
+                $convertedRules += $r
+            }
+        }
+        $patch.rules = $convertedRules
+    }
+
+    # 转换 skills 路径
+    if ($patch.skills) {
+        $convertedSkills = @()
+        foreach ($s in $patch.skills) {
+            if (-not [System.IO.Path]::IsPathRooted($s)) {
+                $convertedSkills += (Join-Path $targetAbs $s)
+            } else {
+                $convertedSkills += $s
+            }
+        }
+        $patch.skills = $convertedSkills
+    }
+
+    # 转换 hooks 中的 command 路径
+    if ($patch.hooks) {
+        foreach ($hookType in $patch.hooks.PSObject.Properties.Name) {
+            for ($i = 0; $i -lt $patch.hooks.$hookType.Count; $i++) {
+                if ($patch.hooks.$hookType[$i].command) {
+                    $patch.hooks.$hookType[$i].command = Convert-NodeCommandPath $patch.hooks.$hookType[$i].command $targetAbs
+                }
+            }
+        }
+    }
+
+    Write-Ok "路径已转为绝对路径"
+
     # ── 合并 models ──
     if ($patch.models) {
         if (-not (Get-Member -InputObject $existing -Name "models" -MemberType Properties)) {

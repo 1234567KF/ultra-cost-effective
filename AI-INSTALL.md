@@ -118,8 +118,53 @@ fi
 ```
 
 **Qoder** — 合并 `adapters/qoder/settings.patch.json` 到 Qoder 的 settings.json：
-- Qoder 的 settings.json 位置需根据实际情况确定
+- Qoder 的 settings.json 位置：`~/.qoder/settings.json`（Windows: `$HOME\.qoder\settings.json`）
+- **⚠️ 关键：`rules`、`skills`、`hooks.command` 中的相对路径必须转为绝对路径**，否则 Qoder 从 `~/.qoder/` 基路径解析会导致全部失效
+- 转换规则：以**当前项目根目录**为基准，将 `ultra-cost-effective/...` 拼接为 `<项目根目录>/ultra-cost-effective/...`
+- hooks 中的 `node ultra-cost-effective/...` 同样转为 `node <项目绝对路径>/ultra-cost-effective/...`
 - 将 patch 中的 `models`、`rules`、`skills`、`mcpServers`、`hooks`、`environment` 合并
+
+**Qoder 路径转换示例（PowerShell）：**
+```powershell
+# 设项目根目录为 $PROJ = "C:\MyProject"
+$PROJ = (Get-Location).Path
+$patch = Get-Content ultra-cost-effective/adapters/qoder/settings.patch.json -Raw | ConvertFrom-Json
+
+# 转换 rules：ultra-cost-effective/rules/main.md → C:\MyProject\ultra-cost-effective\rules\main.md
+$patch.rules = $patch.rules | ForEach-Object { Join-Path $PROJ $_ }
+
+# 转换 skills
+$patch.skills = $patch.skills | ForEach-Object { Join-Path $PROJ $_ }
+
+# 转换 hooks.command 中的 node 路径
+foreach ($hookType in $patch.hooks.PSObject.Properties.Name) {
+    foreach ($hook in $patch.hooks.$hookType) {
+        if ($hook.command) {
+            $hook.command = $hook.command -replace 'node ultra-cost-effective/', "node $PROJ/ultra-cost-effective/"
+        }
+    }
+}
+```
+
+**Qoder 路径转换示例（Bash）：**
+```bash
+PROJ=$(pwd)
+# 用 node 脚本转换（跨平台，推荐 AI 使用此方式）
+node -e "
+const fs = require('fs');
+const path = require('path');
+const proj = '$PROJ';
+const patch = JSON.parse(fs.readFileSync('ultra-cost-effective/adapters/qoder/settings.patch.json','utf-8'));
+patch.rules = patch.rules.map(r => path.resolve(proj, r));
+patch.skills = patch.skills.map(s => path.resolve(proj, s));
+for (const ht of Object.keys(patch.hooks||{})) {
+  for (const h of patch.hooks[ht]) {
+    if (h.command) h.command = h.command.replace('node ultra-cost-effective/', 'node ' + proj + '/ultra-cost-effective/');
+  }
+}
+fs.writeFileSync('ultra-cost-effective/adapters/qoder/settings.patch.json', JSON.stringify(patch, null, 2));
+"
+```
 
 #### 3b. 导入规则到 CLAUDE.md
 
