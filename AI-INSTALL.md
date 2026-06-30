@@ -4,9 +4,21 @@
 
 ---
 
-## Quick Start (AI-Native 自动安装)
+## 🤖 一句话安装（给用户）
 
-> **本文档专为 AI 助手设计**。AI 请严格按照以下步骤完成安装和配置。
+**把下面这句话发给 AI，它就自动装好全部：**
+
+```
+按照 https://github.com/1234567KF/ultra-cost-effective/blob/main/AI-INSTALL.md 安装 UltraCostEffective
+```
+
+> AI 会自动：1) 下载引擎到项目根目录 → 2) 安装技能到平台目录 → 3) 配置 hooks/rules → 4) 验证安装。不用做任何其他事。
+
+---
+
+## Quick Start (AI 执行指引)
+
+> **本文档专为 AI 助手设计**。当用户要求安装 UltraCostEffective 时，请严格按照以下 4 步自动完成全部操作，无需询问用户。
 
 ---
 
